@@ -36,14 +36,35 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 # ============================================================
-# ACTIVOS (25 activos principales)
+# ACTIVOS (52 activos de alta liquidez en Binance/Bybit)
 # ============================================================
 SYMBOLS = [
+    # Top 10 por capitalización
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
     'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'UNI/USDT', 'ATOM/USDT',
-    'NEAR/USDT', 'APT/USDT', 'ARB/USDT', 'OP/USDT', 'INJ/USDT',
-    'SEI/USDT', 'SUI/USDT', 'APE/USDT', 'FTM/USDT', 'ALGO/USDT',
-    'ETC/USDT', 'LTC/USDT', 'DOGE/USDT', 'MATIC/USDT', 'VET/USDT'
+
+    # Capa 1 y Capa 2 consolidados
+    'BNB/USDT', 'MATIC/USDT', 'LTC/USDT', 'ETC/USDT', 'VET/USDT',
+    'ALGO/USDT', 'FTM/USDT', 'NEAR/USDT', 'APT/USDT', 'ARB/USDT',
+    'OP/USDT', 'INJ/USDT', 'SEI/USDT', 'SUI/USDT', 'APE/USDT',
+
+    # Meme coins con alta liquidez
+    'DOGE/USDT', 'PEPE/USDT', 'WIF/USDT', 'BONK/USDT', 'FLOKI/USDT',
+
+    # DeFi y ecosistemas
+    'AAVE/USDT', 'MKR/USDT', 'CRV/USDT', 'LDO/USDT', 'RNDR/USDT',
+
+    # Gaming y metaverso
+    'SAND/USDT', 'MANA/USDT', 'GALA/USDT', 'AXS/USDT', 'ILV/USDT',
+
+    # Almacenamiento y computación
+    'FIL/USDT', 'AR/USDT', 'ICP/USDT', 'RNDR/USDT',
+
+    # Nuevos listados de Binance (confirmados)
+    'COOKIE/USDT', 'ALCH/USDT', 'SWARMS/USDT', 'AERO/USDT',
+    'ETHW/USDT', 'PONKE/USDT', 'SLERF/USDT', 'KMNO/USDT',
+    '1000X/USDT', 'GRIFFAIN/USDT', 'MORPHO/USDT', '1000000MOG/USDT',
+    '1000WHY/USDT', 'SWELL/USDT'
 ]
 
 # ============================================================
@@ -59,10 +80,10 @@ ADX_THRESHOLD = 32                # ADX mínimo
 KER_THRESHOLD = 0.58              # KER mínimo
 SL_MULT = 0.5                     # SL = 0.5 * ATR (~0.19%)
 TP_MULT = 1.0                     # TP = 1.0 * ATR (~0.38%)
-TP_TREND_BONUS = 1.0              # Sin bonus
+TP_TREND_BONUS = 1.0              # Sin bonus (para TP fijo)
 TRAILING_ACTIVATION = 0.0         # SIN ACTIVACIÓN (trailing desde entrada)
-TRAILING_DISTANCE = 0.0010        # 0.10%
-BE_TRIGGER = 0.0015               # 0.15%
+TRAILING_DISTANCE = 0.0010        # 0.10% (distancia fija)
+BE_TRIGGER = 0.0015               # 0.15% (break-even)
 BE_BUFFER = 0.0005                # 0.05%
 
 # ============================================================
