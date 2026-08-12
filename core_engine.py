@@ -10,7 +10,6 @@ def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
     ADX (Average Directional Index)
     Fuente: https://www.investopedia.com/terms/a/adx.asp
-    [reference:10][reference:11]
     """
     if df.empty or len(df) < period:
         return pd.Series(0.0, index=df.index)
@@ -51,7 +50,6 @@ def compute_ker(df: pd.DataFrame, period: int = 10) -> pd.Series:
     """
     KER (Kaufman Efficiency Ratio)
     Fuente: https://trendspider.com/learning-center/kaufman-efficiency-ratio/
-    [reference:12][reference:13]
     """
     if df.empty or len(df) < period:
         return pd.Series(0.0, index=df.index)
@@ -69,7 +67,6 @@ def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
     ATR (Average True Range)
     Fuente: https://www.investopedia.com/terms/a/atr.asp
-    [reference:14][reference:15]
     """
     if df.empty or len(df) < period:
         return pd.Series(0.0, index=df.index)
@@ -91,7 +88,6 @@ def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 def compute_regime(df: pd.DataFrame, atr_period: int = 14) -> str:
     """
     Clasifica régimen: 'Expansión', 'Tendencia Fuerte', 'Tendencia', 'Chop'
-    [reference:16]
     """
     if df.empty or len(df) < 30:
         return 'Chop'
@@ -118,8 +114,7 @@ def compute_pidelta_score(df: pd.DataFrame, ema_period: int = 22,
     """
     Score compuesto [-1, 1].
     Pesos: Trend(25%), Strength(ADX/40)(20%), KER(15%),
-           ATR rel(10%), Momentum(10%)
-    [reference:17]
+           ATR rel(10%), Momentum(10%), EMA direction(20%)
     """
     if df.empty or len(df) < 30:
         return 0.0
@@ -163,3 +158,20 @@ def compute_pidelta_score(df: pd.DataFrame, ema_period: int = 22,
              atr_score + momentum_score + ema_direction_score)
 
     return np.clip(score, -1, 1)
+
+
+def estimate_mfe(df: pd.DataFrame, regime: str, atr_pct: float,
+                 volume_ratio: float) -> float:
+    """
+    Estima el MFE (Maximum Favorable Excursion) esperado.
+    """
+    base = atr_pct * 1.5
+    regime_factors = {
+        'Expansión': 1.5,
+        'Tendencia Fuerte': 1.3,
+        'Tendencia': 1.1,
+        'Chop': 0.5
+    }
+    factor = regime_factors.get(regime, 1.0)
+    volume_factor = min(volume_ratio / 1.2, 1.5)
+    return base * factor * volume_factor
