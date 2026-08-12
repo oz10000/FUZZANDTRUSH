@@ -1,304 +1,192 @@
-# streamlit_app.py
-import streamlit as st
+# signal_engine.py
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime
-import logging
-from data_engine import DataEngine
-from config import (
-    INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION,
-    PROJECT_NAME, TIMEFRAME, SYMBOLS
+import numpy as np
+from core_engine import (
+    compute_adx, compute_ker, compute_atr,
+    compute_regime, compute_pidelta_score, estimate_mfe
 )
-from signal_engine import Signal, rank_signals
+from config import DEFAULT_PARAMS
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-st.set_page_config(
-    page_title=f"{PROJECT_NAME}",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+class Signal:
+    def __init__(self, symbol: str, df: pd.DataFrame, params: dict = None):
+        self.symbol = symbol
+        self.params = params or DEFAULT_PARAMS
+        self.df = df
 
-# ============================================================
-# TÍTULO
-# ============================================================
-st.title(f"📊 {PROJECT_NAME}")
-st.subheader(f"v{VERSION} — Scanner de {len(SYMBOLS)} activos · Timeframe {TIMEFRAME}")
-st.markdown("---")
+        # Inicializar todas las variables que se usarán en to_dict()
+        self.score = 0.0
+        self.adx = 0.0
+        self.ker = 0.0
+        self.atr_pct = 0.0
+        self.atr_abs = 0.0
+        self.regime = 'Chop'
+        self.is_valid = False
+        self.reason = "No evaluado"
+        self.direction = None
+        self.confidence = 0.0
+        self.entry_price = 0.0
+        self.sl_price = 0.0
+        self.tp_price = 0.0
+        self.tp_percent = 0.0
+        self.sl_percent = 0.0
+        self.trailing_activation = 0.0
+        self.trailing_distance = 0.0
+        self.break_even_trigger = 0.0
+        self.break_even_buffer = 0.0
+        self.max_hold_minutes = 0
+        self.ema15 = 0.0
+        self.ema50 = 0.0
+        self.volume_ratio = 0.0
+        self.mfe_expected = 0.0
+        self.max_price_estimate = 0.0
+        self.min_price_estimate = 0.0
+        self.estimated_time_to_trade = 0
 
-# ============================================================
-# SIDEBAR
-# ============================================================
-with st.sidebar:
-    st.header("⚙️ Configuración")
-    st.caption(f"Capital: ${INITIAL_CAPITAL:,.2f}")
-    st.caption(f"Timeframe: {TIMEFRAME}")
-    st.caption(f"Activos: {len(SYMBOLS)}")
+        if not df.empty and len(df) > 30:
+            self._compute()
 
-    st.markdown("---")
-    st.header("🎯 Parámetros Optimizados")
-    st.caption(f"Score mínimo: {DEFAULT_PARAMS['min_score']}")
-    st.caption(f"ADX umbral: {DEFAULT_PARAMS['adx_threshold']}")
-    st.caption(f"KER umbral: {DEFAULT_PARAMS['ker_threshold']}")
-    st.caption(f"TP: {DEFAULT_PARAMS['tp_mult']}× ATR (~0.38%)")
-    st.caption(f"SL: {DEFAULT_PARAMS['sl_mult']}× ATR (~0.19%)")
-    st.caption(f"Trailing: SIN ACTIVACIÓN — {DEFAULT_PARAMS['trailing_distance']*100:.2f}%")
+    def _compute(self):
+        p = self.params
+        close = self.df['close'].iloc[-1]
+        volume = self.df['volume'].iloc[-1]
 
-    st.markdown("---")
-    st.header("🧪 Laboratorio de Research")
-    time_multiplier = st.slider(
-        "Factor de tiempo de predicción",
-        min_value=0.5, max_value=3.0, value=1.0, step=0.1,
-        help="Multiplica el tiempo estimado hasta el próximo trade"
-    )
-    test_timeframe = st.selectbox(
-        "Timeframe de prueba",
-        ['1m', '3m', '5m', '15m', '30m', '1h'],
-        index=2
-    )
-    test_score_threshold = st.slider(
-        "Umbral de score (simulación)",
-        min_value=0.10, max_value=0.80, value=0.50, step=0.05
-    )
+        self.score = compute_pidelta_score(self.df)
+        adx_series = compute_adx(self.df)
+        self.adx = adx_series.iloc[-1] if not adx_series.empty else 0
+        ker_series = compute_ker(self.df, 10)
+        self.ker = ker_series.iloc[-1] if not ker_series.empty else 0
+        atr_series = compute_atr(self.df)
+        atr_val = atr_series.iloc[-1] if not atr_series.empty else 0
+        self.atr_abs = atr_val
+        self.atr_pct = atr_val / close if close > 0 else 0
+        self.regime = compute_regime(self.df)
+        self.ema15 = self.df['close'].ewm(span=15).mean().iloc[-1]
+        self.ema50 = self.df['close'].ewm(span=50).mean().iloc[-1]
+        avg_volume = self.df['volume'].rolling(20).mean().iloc[-1]
+        self.volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+        self.direction = 'LONG' if self.score > 0 else 'SHORT'
 
-    if st.button("▶️ Ejecutar simulación", type="primary"):
-        with st.spinner("Simulando escenarios..."):
-            st.success("✅ Simulación completada (modo demostrativo).")
-            st.info(
-                f"Con score ≥ {test_score_threshold:.2f} y timeframe {test_timeframe}, "
-                f"el tiempo medio al próximo trade se estima en ~{45 / time_multiplier:.0f} min."
-            )
-
-    st.markdown("---")
-    st.header("🔄 Acciones")
-    refresh_btn = st.button("🔄 Actualizar Ranking", type="primary", use_container_width=True)
-
-    st.markdown("---")
-    st.header("📊 Estado")
-    st.caption(f"Última actualización: {st.session_state.get('last_refresh', 'Nunca')}")
-    st.caption(f"Señales aprobadas: {len(st.session_state.get('valid_signals', []))}")
-    st.caption(f"Señales totales: {len(st.session_state.get('ranked_signals', []))}")
-
-# ============================================================
-# INICIALIZACIÓN
-# ============================================================
-if 'data_engine' not in st.session_state:
-    with st.spinner("🔌 Inicializando motor de datos..."):
-        st.session_state.data_engine = DataEngine()
-        st.session_state.symbols = SYMBOLS
-        st.session_state.signals = []
-        st.session_state.valid_signals = []
-        st.session_state.ranked_signals = []
-        st.session_state.last_refresh = None
-        st.session_state.data_dict = {}
-
-# ============================================================
-# FUNCIONES
-# ============================================================
-def refresh_ranking():
-    """Escanea todos los activos y genera el ranking completo."""
-    de = st.session_state.data_engine
-    symbols = st.session_state.symbols
-
-    signals = []
-    data_dict = {}
-
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    for i, sym in enumerate(symbols):
-        status_text.text(f"Escaneando {sym}... ({i+1}/{len(symbols)})")
-        df = de.fetch_ohlcv(sym, limit=300)
-        if df is not None and not df.empty:
-            data_dict[sym] = df
-            s = Signal(sym, df, DEFAULT_PARAMS)
-            signals.append(s.to_dict())
-        progress_bar.progress((i + 1) / len(symbols))
-
-    progress_bar.empty()
-    status_text.empty()
-
-    st.session_state.data_dict = data_dict
-    st.session_state.signals = signals
-    st.session_state.valid_signals = [s for s in signals if s.get('is_valid', False)]
-    st.session_state.ranked_signals = rank_signals(signals)
-    st.session_state.last_refresh = datetime.now().strftime("%H:%M:%S")
-
-# ============================================================
-# EJECUCIÓN
-# ============================================================
-if refresh_btn or st.session_state.last_refresh is None:
-    with st.spinner("🔍 Escaneando activos..."):
-        refresh_ranking()
-    st.rerun()
-
-# ============================================================
-# DASHBOARD PRINCIPAL
-# ============================================================
-ranked = st.session_state.get('ranked_signals', [])
-valid = st.session_state.get('valid_signals', [])
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("📈 Señales aprobadas", len(valid))
-with col2:
-    st.metric("📊 Señales totales", len(ranked))
-with col3:
-    aprobados = sum(1 for s in valid if s.get('direction') == 'LONG')
-    st.metric("🟢 LONG aprobadas", aprobados)
-with col4:
-    cortos = sum(1 for s in valid if s.get('direction') == 'SHORT')
-    st.metric("🔴 SHORT aprobados", cortos)
-
-st.markdown("---")
-
-# ============================================================
-# TABLA DE RANKING COMPLETO
-# ============================================================
-st.subheader("🏆 Ranking de Señales (Todas)")
-
-if ranked:
-    df_rank = pd.DataFrame(ranked)
-
-    display_cols = [
-        'rank_label', 'symbol', 'direction', 'score', 'adx', 'ker',
-        'regime', 'confidence', 'is_valid', 'reason',
-        'tp_percent', 'sl_percent', 'entry_price', 'tp_price', 'sl_price',
-        'max_price_estimate', 'min_price_estimate',
-        'estimated_time_to_trade'
-    ]
-
-    rename_map = {
-        'rank_label': 'Rank',
-        'symbol': 'Activo',
-        'direction': 'Dir.',
-        'score': 'Score',
-        'adx': 'ADX',
-        'ker': 'KER',
-        'regime': 'Régimen',
-        'confidence': 'Confianza',
-        'is_valid': 'Aprobada',
-        'reason': 'Razón',
-        'tp_percent': 'TP %',
-        'sl_percent': 'SL %',
-        'entry_price': 'Entrada $',
-        'tp_price': 'TP $',
-        'sl_price': 'SL $',
-        'max_price_estimate': 'Máx estimado $',
-        'min_price_estimate': 'Mín estimado $',
-        'estimated_time_to_trade': '⏱️ Próximo trade (min)'
-    }
-
-    df_display = df_rank[display_cols].rename(columns=rename_map)
-
-    def color_rows(row):
-        if row['Aprobada']:
-            return ['background-color: #1a3a1a; color: #00ff88'] * len(row)
+        # Validación
+        self.is_valid = True
+        self.reason = "OK"
+        if abs(self.score) < p['min_score']:
+            self.is_valid = False
+            self.reason = f"score {self.score:.2f} < {p['min_score']}"
+        elif self.adx < p['adx_threshold']:
+            self.is_valid = False
+            self.reason = f"ADX {self.adx:.1f} < {p['adx_threshold']}"
+        elif self.ker < p['ker_threshold']:
+            self.is_valid = False
+            self.reason = f"KER {self.ker:.2f} < {p['ker_threshold']}"
+        elif self.regime == 'Chop':
+            self.is_valid = False
+            self.reason = "Régimen Chop"
         else:
-            return ['background-color: #3a1a1a; color: #ff6666'] * len(row)
+            if self.direction == 'LONG' and close < self.ema15:
+                self.is_valid = False
+                self.reason = "Precio < EMA15"
+            elif self.direction == 'SHORT' and close > self.ema15:
+                self.is_valid = False
+                self.reason = "Precio > EMA15"
 
-    st.dataframe(
-        df_display.style.apply(color_rows, axis=1),
-        use_container_width=True,
-        height=600
-    )
-else:
-    st.info("No hay señales disponibles. Presiona 'Actualizar Ranking'.")
+        # Precios
+        self.entry_price = close
+        sl_mult = p['sl_mult']
+        tp_mult = p['tp_mult']
+        if self.direction == 'LONG':
+            self.sl_price = close * (1 - sl_mult * self.atr_pct)
+            self.tp_price = close * (1 + tp_mult * self.atr_pct)
+        else:
+            self.sl_price = close * (1 + sl_mult * self.atr_pct)
+            self.tp_price = close * (1 - tp_mult * self.atr_pct)
 
-st.markdown("---")
+        self.tp_percent = (self.tp_price / self.entry_price - 1) * 100
+        self.sl_percent = (self.sl_price / self.entry_price - 1) * 100
 
-# ============================================================
-# TABLA DE HORARIOS (Argentina UTC-3)
-# ============================================================
-st.subheader("🕒 Análisis de Horarios y Trades (Argentina UTC-3)")
+        self.trailing_activation = 0.0
+        self.trailing_distance = p['trailing_distance']
+        self.break_even_trigger = p['be_trigger']
+        self.break_even_buffer = p['be_buffer']
+        self.max_hold_minutes = p['max_hold']
 
-horarios_data = {
-    'Rango Horario': ['11:30–13:30', '13:30–15:00', '15:00–17:00',
-                      '09:00–11:30', '17:00–20:00', '20:00–05:00'],
-    'Trades/día': [1.2, 0.8, 0.6, 0.4, 0.2, 0.0],
-    'Volatilidad': ['Alta', 'Media-Alta', 'Media', 'Media', 'Baja', 'Muy baja'],
-    'Razón': ['Solapamiento Londres-Wall Street', 'Wall Street activo',
-              'Cierre Wall Street', 'Apertura Londres', 'Cierre mercados', 'Sesión asiática']
-}
-df_horarios = pd.DataFrame(horarios_data)
-st.dataframe(df_horarios, use_container_width=True)
+        self.confidence = (
+            30 +
+            20 * (self.adx / 40) +
+            20 * (self.ker / 0.6) +
+            15 * (abs(self.score) / 0.6) +
+            15 * min(self.volume_ratio / 1.5, 1)
+        )
+        self.confidence = min(max(self.confidence, 0), 100)
 
-# ============================================================
-# TABLA DE DÍAS
-# ============================================================
-st.subheader("📅 Días con mayor frecuencia de trades")
+        self.mfe_expected = estimate_mfe(self.df, self.regime, self.atr_pct, self.volume_ratio)
+        mfe = self.mfe_expected
+        if self.direction == 'LONG':
+            self.max_price_estimate = close * (1 + mfe * 1.5)
+            self.min_price_estimate = close * (1 - mfe * 0.5)
+        else:
+            self.max_price_estimate = close * (1 + mfe * 0.5)
+            self.min_price_estimate = close * (1 - mfe * 1.5)
 
-dias_data = {
-    'Día': ['Martes', 'Miércoles', 'Jueves', 'Viernes', 'Lunes'],
-    'Trades/semana': [4.5, 4.2, 3.8, 3.5, 2.8],
-    'Observación': ['Pico de volatilidad semanal', 'Segundo pico', '', 'Volatilidad alta al cierre', 'Apertura más lenta']
-}
-df_dias = pd.DataFrame(dias_data)
-st.dataframe(df_dias, use_container_width=True)
+        self.estimated_time_to_trade = self._estimate_time_to_trade()
 
-st.markdown("---")
+    def _estimate_time_to_trade(self) -> int:
+        if self.is_valid:
+            if self.confidence > 80:
+                return 5 + int((100 - self.confidence) / 10)
+            else:
+                return 10 + int((80 - self.confidence) / 5)
+        else:
+            if abs(self.score) > 0.5:
+                return 15 + int((1 - abs(self.score)) * 30)
+            else:
+                return 45 + int((1 - abs(self.score)) * 60)
 
-# ============================================================
-# SEÑALES APROBADAS (DETALLE)
-# ============================================================
-st.subheader("✅ Señales Aprobadas (Detalle)")
+    def to_dict(self) -> dict:
+        return {
+            'symbol': self.symbol,
+            'score': self.score,
+            'adx': self.adx,
+            'ker': self.ker,
+            'atr_pct': self.atr_pct,
+            'atr_abs': self.atr_abs,
+            'regime': self.regime,
+            'direction': self.direction,
+            'is_valid': self.is_valid,
+            'reason': self.reason,
+            'confidence': self.confidence,
+            'entry_price': self.entry_price,
+            'sl_price': self.sl_price,
+            'tp_price': self.tp_price,
+            'tp_percent': self.tp_percent,
+            'sl_percent': self.sl_percent,
+            'trailing_activation': self.trailing_activation,
+            'trailing_distance': self.trailing_distance,
+            'break_even_trigger': self.break_even_trigger,
+            'break_even_buffer': self.break_even_buffer,
+            'max_hold_minutes': self.max_hold_minutes,
+            'ema15': self.ema15,
+            'ema50': self.ema50,
+            'volume_ratio': self.volume_ratio,
+            'mfe_expected': self.mfe_expected,
+            'max_price_estimate': self.max_price_estimate,
+            'min_price_estimate': self.min_price_estimate,
+            'estimated_time_to_trade': self.estimated_time_to_trade,
+        }
 
-if valid:
-    for s in valid[:10]:
-        with st.expander(f"{s['symbol']} — {s['direction']} (Score: {s['score']:.2f})"):
-            col1, col2, col3 = st.columns(3)
 
-            with col1:
-                st.metric("📊 Score", f"{s['score']:.3f}")
-                st.metric("📈 ADX", f"{s['adx']:.1f}")
-                st.metric("📉 KER", f"{s['ker']:.3f}")
-                st.metric("🎯 Régimen", s['regime'])
-                st.metric("📊 Volumen ratio", f"{s['volume_ratio']:.2f}x")
-                st.metric("📈 MFE esperado", f"{s['mfe_expected']*100:.2f}%")
-
-            with col2:
-                st.metric("💹 Confianza", f"{s['confidence']:.1f}%")
-                st.metric("📌 Entrada", f"${s['entry_price']:.2f}")
-                st.metric("🛑 SL", f"${s['sl_price']:.2f} ({s['sl_percent']:.2f}%)")
-                st.metric("🎯 TP", f"${s['tp_price']:.2f} ({s['tp_percent']:.2f}%)")
-
-            with col3:
-                st.metric("📈 Máx estimado", f"${s['max_price_estimate']:.2f}")
-                st.metric("📉 Mín estimado", f"${s['min_price_estimate']:.2f}")
-                st.metric("⏱️ Próximo trade (estimado)", f"{s['estimated_time_to_trade'] * time_multiplier:.0f} min")
-                st.metric("🔒 Trailing (sin activación)", f"Distancia: {s['trailing_distance']*100:.2f}%")
-
-            # Gráfico de velas
-            if s['symbol'] in st.session_state.data_dict:
-                df = st.session_state.data_dict[s['symbol']]
-                if df is not None and not df.empty:
-                    fig = go.Figure(data=[
-                        go.Candlestick(
-                            x=df.index[-50:],
-                            open=df['open'][-50:],
-                            high=df['high'][-50:],
-                            low=df['low'][-50:],
-                            close=df['close'][-50:]
-                        )
-                    ])
-                    # Líneas de entrada, SL, TP
-                    fig.add_hline(y=s['entry_price'], line_dash="dash", line_color="white", annotation_text="Entry")
-                    fig.add_hline(y=s['sl_price'], line_dash="dash", line_color="red", annotation_text="SL")
-                    fig.add_hline(y=s['tp_price'], line_dash="dash", line_color="green", annotation_text="TP")
-                    fig.update_layout(
-                        height=250,
-                        margin=dict(l=0, r=0, t=0, b=0),
-                        xaxis_rangeslider_visible=False
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-else:
-    st.info("No hay señales aprobadas en este momento.")
-
-# ============================================================
-# PIE DE PÁGINA
-# ============================================================
-st.markdown("---")
-st.caption(f"DAPS Ω Scanner v{VERSION} — Última actualización: {st.session_state.get('last_refresh', 'Nunca')}")
+def rank_signals(signals: list) -> list:
+    valid = [s for s in signals if s.get('is_valid', False)]
+    invalid = [s for s in signals if not s.get('is_valid', False)]
+    valid_sorted = sorted(valid, key=lambda x: abs(x['score']), reverse=True)
+    invalid_sorted = sorted(invalid, key=lambda x: abs(x['score']), reverse=True)
+    ranked = []
+    for i, s in enumerate(valid_sorted):
+        s['rank'] = i + 1
+        s['rank_label'] = f"#{i+1} APROBADA"
+        ranked.append(s)
+    for i, s in enumerate(invalid_sorted):
+        s['rank'] = len(valid_sorted) + i + 1
+        s['rank_label'] = f"#{len(valid_sorted)+i+1} (no aprobada)"
+        ranked.append(s)
+    return ranked
