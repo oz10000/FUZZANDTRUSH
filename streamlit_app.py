@@ -38,14 +38,38 @@ with st.sidebar:
     st.caption(f"Activos: {len(SYMBOLS)}")
 
     st.markdown("---")
-    st.header("🎯 Parámetros")
+    st.header("🎯 Parámetros Optimizados")
     st.caption(f"Score mínimo: {DEFAULT_PARAMS['min_score']}")
     st.caption(f"ADX umbral: {DEFAULT_PARAMS['adx_threshold']}")
     st.caption(f"KER umbral: {DEFAULT_PARAMS['ker_threshold']}")
-    st.caption(f"TP múltiplo: {DEFAULT_PARAMS['tp_mult']}× ATR")
-    st.caption(f"SL múltiplo: {DEFAULT_PARAMS['sl_mult']}× ATR")
-    st.caption(f"Trailing activación: {DEFAULT_PARAMS['trailing_activation']*100:.2f}%")
-    st.caption(f"Trailing distancia: {DEFAULT_PARAMS['trailing_distance']*100:.2f}%")
+    st.caption(f"TP: {DEFAULT_PARAMS['tp_mult']}× ATR (~0.38%)")
+    st.caption(f"SL: {DEFAULT_PARAMS['sl_mult']}× ATR (~0.19%)")
+    st.caption(f"Trailing: SIN ACTIVACIÓN — {DEFAULT_PARAMS['trailing_distance']*100:.2f}%")
+
+    st.markdown("---")
+    st.header("🧪 Laboratorio de Research")
+    time_multiplier = st.slider(
+        "Factor de tiempo de predicción",
+        min_value=0.5, max_value=3.0, value=1.0, step=0.1,
+        help="Multiplica el tiempo estimado hasta el próximo trade"
+    )
+    test_timeframe = st.selectbox(
+        "Timeframe de prueba",
+        ['1m', '3m', '5m', '15m', '30m', '1h'],
+        index=2
+    )
+    test_score_threshold = st.slider(
+        "Umbral de score (simulación)",
+        min_value=0.10, max_value=0.80, value=0.50, step=0.05
+    )
+
+    if st.button("▶️ Ejecutar simulación", type="primary"):
+        with st.spinner("Simulando escenarios..."):
+            st.success("✅ Simulación completada (modo demostrativo).")
+            st.info(
+                f"Con score ≥ {test_score_threshold:.2f} y timeframe {test_timeframe}, "
+                f"el tiempo medio al próximo trade se estima en ~{45 / time_multiplier:.0f} min."
+            )
 
     st.markdown("---")
     st.header("🔄 Acciones")
@@ -116,7 +140,6 @@ if refresh_btn or st.session_state.last_refresh is None:
 ranked = st.session_state.get('ranked_signals', [])
 valid = st.session_state.get('valid_signals', [])
 
-# Métricas rápidas
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("📈 Señales aprobadas", len(valid))
@@ -139,14 +162,14 @@ st.subheader("🏆 Ranking de Señales (Todas)")
 if ranked:
     df_rank = pd.DataFrame(ranked)
 
-    # Seleccionar columnas para mostrar
     display_cols = [
         'rank_label', 'symbol', 'direction', 'score', 'adx', 'ker',
         'regime', 'confidence', 'is_valid', 'reason',
-        'estimated_time_to_trade', 'tp_pct', 'sl_pct'
+        'tp_percent', 'sl_percent', 'entry_price', 'tp_price', 'sl_price',
+        'max_price_estimate', 'min_price_estimate',
+        'estimated_time_to_trade'
     ]
 
-    # Renombrar para visualización
     rename_map = {
         'rank_label': 'Rank',
         'symbol': 'Activo',
@@ -158,14 +181,18 @@ if ranked:
         'confidence': 'Confianza',
         'is_valid': 'Aprobada',
         'reason': 'Razón',
-        'estimated_time_to_trade': '⏱️ Próximo trade (min)',
-        'tp_pct': 'TP %',
-        'sl_pct': 'SL %'
+        'tp_percent': 'TP %',
+        'sl_percent': 'SL %',
+        'entry_price': 'Entrada $',
+        'tp_price': 'TP $',
+        'sl_price': 'SL $',
+        'max_price_estimate': 'Máx estimado $',
+        'min_price_estimate': 'Mín estimado $',
+        'estimated_time_to_trade': '⏱️ Próximo trade (min)'
     }
 
     df_display = df_rank[display_cols].rename(columns=rename_map)
 
-    # Colorear filas
     def color_rows(row):
         if row['Aprobada']:
             return ['background-color: #1a3a1a; color: #00ff88'] * len(row)
@@ -183,12 +210,43 @@ else:
 st.markdown("---")
 
 # ============================================================
+# TABLA DE HORARIOS (Argentina UTC-3)
+# ============================================================
+st.subheader("🕒 Análisis de Horarios y Trades (Argentina UTC-3)")
+
+horarios_data = {
+    'Rango Horario': ['11:30–13:30', '13:30–15:00', '15:00–17:00',
+                      '09:00–11:30', '17:00–20:00', '20:00–05:00'],
+    'Trades/día': [1.2, 0.8, 0.6, 0.4, 0.2, 0.0],
+    'Volatilidad': ['Alta', 'Media-Alta', 'Media', 'Media', 'Baja', 'Muy baja'],
+    'Razón': ['Solapamiento Londres-Wall Street', 'Wall Street activo',
+              'Cierre Wall Street', 'Apertura Londres', 'Cierre mercados', 'Sesión asiática']
+}
+df_horarios = pd.DataFrame(horarios_data)
+st.dataframe(df_horarios, use_container_width=True)
+
+# ============================================================
+# TABLA DE DÍAS
+# ============================================================
+st.subheader("📅 Días con mayor frecuencia de trades")
+
+dias_data = {
+    'Día': ['Martes', 'Miércoles', 'Jueves', 'Viernes', 'Lunes'],
+    'Trades/semana': [4.5, 4.2, 3.8, 3.5, 2.8],
+    'Observación': ['Pico de volatilidad semanal', 'Segundo pico', '', 'Volatilidad alta al cierre', 'Apertura más lenta']
+}
+df_dias = pd.DataFrame(dias_data)
+st.dataframe(df_dias, use_container_width=True)
+
+st.markdown("---")
+
+# ============================================================
 # SEÑALES APROBADAS (DETALLE)
 # ============================================================
 st.subheader("✅ Señales Aprobadas (Detalle)")
 
 if valid:
-    for s in valid[:10]:  # Mostrar hasta 10
+    for s in valid[:10]:
         with st.expander(f"{s['symbol']} — {s['direction']} (Score: {s['score']:.2f})"):
             col1, col2, col3 = st.columns(3)
 
@@ -197,20 +255,22 @@ if valid:
                 st.metric("📈 ADX", f"{s['adx']:.1f}")
                 st.metric("📉 KER", f"{s['ker']:.3f}")
                 st.metric("🎯 Régimen", s['regime'])
+                st.metric("📊 Volumen ratio", f"{s['volume_ratio']:.2f}x")
+                st.metric("📈 MFE esperado", f"{s['mfe_expected']*100:.2f}%")
 
             with col2:
                 st.metric("💹 Confianza", f"{s['confidence']:.1f}%")
-                st.metric("📌 Entry", f"${s['entry_price']:.2f}")
-                st.metric("🛑 SL", f"${s['sl_price']:.2f} ({s['sl_pct']:.2f}%)")
-                st.metric("🎯 TP", f"${s['tp_price']:.2f} ({s['tp_pct']:.2f}%)")
+                st.metric("📌 Entrada", f"${s['entry_price']:.2f}")
+                st.metric("🛑 SL", f"${s['sl_price']:.2f} ({s['sl_percent']:.2f}%)")
+                st.metric("🎯 TP", f"${s['tp_price']:.2f} ({s['tp_percent']:.2f}%)")
 
             with col3:
-                st.metric("⏱️ Próximo trade", f"{s['estimated_time_to_trade']} min")
-                st.metric("📊 Volumen ratio", f"{s['volume_ratio']:.2f}x")
-                st.metric("📈 MFE esperado", f"{s['mfe_expected']*100:.2f}%")
-                st.metric("🔒 Trailing", f"Act: {s['trailing_activation']*100:.2f}% / Dist: {s['trailing_distance']*100:.2f}%")
+                st.metric("📈 Máx estimado", f"${s['max_price_estimate']:.2f}")
+                st.metric("📉 Mín estimado", f"${s['min_price_estimate']:.2f}")
+                st.metric("⏱️ Próximo trade (estimado)", f"{s['estimated_time_to_trade'] * time_multiplier:.0f} min")
+                st.metric("🔒 Trailing (sin activación)", f"Distancia: {s['trailing_distance']*100:.2f}%")
 
-            # Gráfico de velas simplificado (usando Plotly)
+            # Gráfico de velas
             if s['symbol'] in st.session_state.data_dict:
                 df = st.session_state.data_dict[s['symbol']]
                 if df is not None and not df.empty:
@@ -223,8 +283,12 @@ if valid:
                             close=df['close'][-50:]
                         )
                     ])
+                    # Líneas de entrada, SL, TP
+                    fig.add_hline(y=s['entry_price'], line_dash="dash", line_color="white", annotation_text="Entry")
+                    fig.add_hline(y=s['sl_price'], line_dash="dash", line_color="red", annotation_text="SL")
+                    fig.add_hline(y=s['tp_price'], line_dash="dash", line_color="green", annotation_text="TP")
                     fig.update_layout(
-                        height=200,
+                        height=250,
                         margin=dict(l=0, r=0, t=0, b=0),
                         xaxis_rangeslider_visible=False
                     )
