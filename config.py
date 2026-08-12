@@ -5,7 +5,7 @@ import os
 # PROYECTO
 # ============================================================
 PROJECT_NAME = "DAPS Ω — Scanner de Señales"
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
 # ============================================================
 # ZONA HORARIA Y FILTROS
@@ -19,8 +19,8 @@ HOUR_FILTER_END = 18
 # ============================================================
 TIMEFRAME = '5m'
 INITIAL_CAPITAL = 10000.0
-MAX_HOLD = 120                    # minutos
-RISK_PER_TRADE = 0.02
+MAX_HOLD = 60                     # minutos (reducido de 120)
+RISK_PER_TRADE = 0.01             # 1% por operación
 LEVERAGE = 1
 
 # ============================================================
@@ -52,17 +52,17 @@ SYMBOLS = [
 EXCHANGE_PRIORITY = ['binance', 'okx', 'kucoin', 'mexc', 'kraken', 'bybit']
 
 # ============================================================
-# PARÁMETROS DE ESTRATEGIA (optimizados para High WR)
+# PARÁMETROS DE ESTRATEGIA OPTIMIZADOS (Iteración 7)
 # ============================================================
-MIN_SCORE = 0.35                  # Score mínimo para señal aprobada
-ADX_THRESHOLD = 22                # ADX mínimo
-KER_THRESHOLD = 0.42              # KER mínimo
-SL_MULT = 0.8                     # SL = SL_MULT * ATR
-TP_MULT = 1.8                     # TP = TP_MULT * ATR (~0.7%)
-TP_TREND_BONUS = 1.1
-TRAILING_ACTIVATION = 0.0010      # 0.10%
-TRAILING_DISTANCE = 0.0005        # 0.05%
-BE_TRIGGER = 0.0020               # 0.20%
+MIN_SCORE = 0.50                  # Score mínimo (subido de 0.35)
+ADX_THRESHOLD = 32                # ADX mínimo (subido de 22)
+KER_THRESHOLD = 0.58              # KER mínimo (subido de 0.42)
+SL_MULT = 0.5                     # SL = 0.5 * ATR (~0.19%)
+TP_MULT = 1.0                     # TP = 1.0 * ATR (~0.38%)
+TP_TREND_BONUS = 1.0              # Sin bonus (para TP fijo)
+TRAILING_ACTIVATION = 0.0         # SIN ACTIVACIÓN (trailing desde entrada)
+TRAILING_DISTANCE = 0.0010        # 0.10% (distancia fija)
+BE_TRIGGER = 0.0015               # 0.15% (break-even)
 BE_BUFFER = 0.0005                # 0.05%
 
 # ============================================================
