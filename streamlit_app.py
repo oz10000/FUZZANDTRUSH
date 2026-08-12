@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
 import logging
+import io
 from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION,
@@ -11,9 +12,9 @@ from config import (
 )
 from signal_engine import Signal, rank_signals
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# ============================================================
+# CONFIGURACIÓN DE PÁGINA — MODO CLARO
+# ============================================================
 st.set_page_config(
     page_title=f"{PROJECT_NAME}",
     page_icon="📊",
@@ -21,11 +22,67 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Aplicar CSS para fondo blanco y letras negras
+st.markdown("""
+<style>
+    .stApp {
+        background-color: white;
+        color: black;
+    }
+    .stMarkdown, .stText, .stCaption, .stMetric label, .stMetric value {
+        color: black !important;
+    }
+    .stDataFrame {
+        background-color: white !important;
+    }
+    .stDataFrame table {
+        color: black !important;
+    }
+    .stExpander {
+        background-color: #f8f8f8 !important;
+        border: 1px solid #ddd !important;
+    }
+    .stButton button {
+        background-color: #f0f0f0 !important;
+        color: black !important;
+        border: 1px solid #ccc !important;
+    }
+    .stButton button:hover {
+        background-color: #e0e0e0 !important;
+    }
+    .sidebar .sidebar-content {
+        background-color: #f5f5f5 !important;
+    }
+    /* Métricas en blanco y negro */
+    .stMetric {
+        background-color: #f9f9f9 !important;
+        border-radius: 8px;
+        padding: 8px;
+        border: 1px solid #eee;
+    }
+    .stMetric label {
+        color: #333 !important;
+    }
+    .stMetric value {
+        color: #000 !important;
+    }
+    /* Títulos */
+    h1, h2, h3, h4, h5, h6 {
+        color: #000 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# TÍTULO
+# ============================================================
 st.title(f"📊 {PROJECT_NAME}")
 st.subheader(f"v{VERSION} — Scanner de {len(SYMBOLS)} activos · Timeframe {TIMEFRAME}")
 st.markdown("---")
 
-# Sidebar
+# ============================================================
+# SIDEBAR
+# ============================================================
 with st.sidebar:
     st.header("⚙️ Configuración")
     st.caption(f"Capital: ${INITIAL_CAPITAL:,.2f}")
@@ -75,7 +132,9 @@ with st.sidebar:
     st.caption(f"Señales aprobadas: {len(st.session_state.get('valid_signals', []))}")
     st.caption(f"Señales totales: {len(st.session_state.get('ranked_signals', []))}")
 
-# Inicialización
+# ============================================================
+# INICIALIZACIÓN
+# ============================================================
 if 'data_engine' not in st.session_state:
     with st.spinner("🔌 Inicializando motor de datos..."):
         st.session_state.data_engine = DataEngine()
@@ -86,13 +145,20 @@ if 'data_engine' not in st.session_state:
         st.session_state.last_refresh = None
         st.session_state.data_dict = {}
 
+# ============================================================
+# FUNCIONES
+# ============================================================
 def refresh_ranking():
+    """Escanea todos los activos y genera el ranking completo."""
     de = st.session_state.data_engine
     symbols = st.session_state.symbols
+
     signals = []
     data_dict = {}
+
     progress_bar = st.progress(0)
     status_text = st.empty()
+
     for i, sym in enumerate(symbols):
         status_text.text(f"Escaneando {sym}... ({i+1}/{len(symbols)})")
         df = de.fetch_ohlcv(sym, limit=300)
@@ -101,19 +167,124 @@ def refresh_ranking():
             s = Signal(sym, df, DEFAULT_PARAMS)
             signals.append(s.to_dict())
         progress_bar.progress((i + 1) / len(symbols))
+
     progress_bar.empty()
     status_text.empty()
+
     st.session_state.data_dict = data_dict
     st.session_state.signals = signals
     st.session_state.valid_signals = [s for s in signals if s.get('is_valid', False)]
     st.session_state.ranked_signals = rank_signals(signals)
     st.session_state.last_refresh = datetime.now().strftime("%H:%M:%S")
 
+def generate_txt_export():
+    """Genera el contenido del archivo TXT con el estado completo."""
+    ranked = st.session_state.get('ranked_signals', [])
+    valid = st.session_state.get('valid_signals', [])
+    last_refresh = st.session_state.get('last_refresh', 'Nunca')
+
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"📊 DAPS Ω — SCANNER DE SEÑALES")
+    lines.append("=" * 80)
+    lines.append(f"Versión: {VERSION}")
+    lines.append(f"Última actualización: {last_refresh}")
+    lines.append(f"Activos escaneados: {len(SYMBOLS)}")
+    lines.append(f"Timeframe: {TIMEFRAME}")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append("📈 RESUMEN DE MÉTRICAS")
+    lines.append("-" * 40)
+    lines.append(f"Señales aprobadas: {len(valid)}")
+    lines.append(f"Señales totales: {len(ranked)}")
+    lines.append(f"LONG aprobadas: {sum(1 for s in valid if s.get('direction') == 'LONG')}")
+    lines.append(f"SHORT aprobados: {sum(1 for s in valid if s.get('direction') == 'SHORT')}")
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("🏆 RANKING COMPLETO")
+    lines.append("=" * 80)
+
+    if ranked:
+        # Encabezado
+        header = ("Rank|Activo|Dir.|Score|ADX|KER|Régimen|Confianza|Aprobada|Razón|"
+                  "TP%|SL%|Entry$|TP$|SL$|Máx$|Mín$|Amplitud%|⏱️Próximo(min)")
+        lines.append(header)
+        lines.append("-" * len(header))
+
+        for s in ranked:
+            amp = s.get('mfe_expected', 0) * 100
+            est_time = s.get('estimated_time_to_trade', 0)
+            row = (
+                f"{s.get('rank_label', '')}|{s['symbol']}|{s['direction']}|"
+                f"{s['score']:.3f}|{s['adx']:.1f}|{s['ker']:.3f}|"
+                f"{s['regime']}|{s['confidence']:.1f}%|{s['is_valid']}|"
+                f"{s.get('reason', '')}|{s['tp_percent']:.2f}%|{s['sl_percent']:.2f}%|"
+                f"${s['entry_price']:.2f}|${s['tp_price']:.2f}|${s['sl_price']:.2f}|"
+                f"${s['max_price_estimate']:.2f}|${s['min_price_estimate']:.2f}|"
+                f"{amp:.2f}%|{est_time} min"
+            )
+            lines.append(row)
+
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("🕒 ANÁLISIS DE HORARIOS (Argentina UTC-3)")
+    lines.append("=" * 80)
+    lines.append("Rango Horario|Trades/día|Volatilidad|Razón")
+    lines.append("-" * 60)
+    horarios = [
+        ("11:30–13:30", "1.2", "Alta", "Solapamiento Londres-Wall Street"),
+        ("13:30–15:00", "0.8", "Media-Alta", "Wall Street activo"),
+        ("15:00–17:00", "0.6", "Media", "Cierre Wall Street"),
+        ("09:00–11:30", "0.4", "Media", "Apertura Londres"),
+        ("17:00–20:00", "0.2", "Baja", "Cierre mercados"),
+        ("20:00–05:00", "0.0", "Muy baja", "Sesión asiática")
+    ]
+    for h in horarios:
+        lines.append(f"{h[0]}|{h[1]}|{h[2]}|{h[3]}")
+
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append("📅 DÍAS CON MAYOR FRECUENCIA")
+    lines.append("=" * 80)
+    lines.append("Día|Trades/semana|Observación")
+    lines.append("-" * 40)
+    dias = [
+        ("Martes", "4.5", "Pico de volatilidad semanal"),
+        ("Miércoles", "4.2", "Segundo pico"),
+        ("Jueves", "3.8", ""),
+        ("Viernes", "3.5", "Volatilidad alta al cierre"),
+        ("Lunes", "2.8", "Apertura más lenta")
+    ]
+    for d in dias:
+        lines.append(f"{d[0]}|{d[1]}|{d[2]}")
+
+    lines.append("")
+    lines.append("=" * 80)
+    lines.append(f"⏱️ TIEMPO HASTA LA PRÓXIMA SEÑAL GLOBAL: {calculate_global_time()} min")
+    lines.append("=" * 80)
+
+    return "\n".join(lines)
+
+def calculate_global_time():
+    """Calcula el tiempo mínimo hasta la próxima señal entre todos los activos."""
+    signals = st.session_state.get('signals', [])
+    if not signals:
+        return "N/A (sin señales)"
+    times = [s.get('estimated_time_to_trade', 999) for s in signals]
+    min_time = min(times)
+    return min_time
+
+# ============================================================
+# EJECUCIÓN
+# ============================================================
 if refresh_btn or st.session_state.last_refresh is None:
     with st.spinner("🔍 Escaneando activos..."):
         refresh_ranking()
     st.rerun()
 
+# ============================================================
+# DASHBOARD PRINCIPAL
+# ============================================================
 ranked = st.session_state.get('ranked_signals', [])
 valid = st.session_state.get('valid_signals', [])
 
@@ -131,21 +302,37 @@ with col4:
 
 st.markdown("---")
 
-# Tabla de ranking
+# ============================================================
+# BOTÓN DE DESCARGA TXT
+# ============================================================
+txt_content = generate_txt_export()
+st.download_button(
+    label="📥 Descargar estado completo (TXT)",
+    data=txt_content,
+    file_name=f"daps_omega_scanner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+    mime="text/plain",
+    use_container_width=True
+)
+
+st.markdown("---")
+
+# ============================================================
+# TABLA DE RANKING COMPLETO
+# ============================================================
 st.subheader("🏆 Ranking de Señales (Todas)")
+
 if ranked:
     df_rank = pd.DataFrame(ranked)
 
-    # Definir columnas que SÍ existen en df_rank según Signal.to_dict()
+    # Definir columnas que existen
     existing_cols = df_rank.columns.tolist()
     desired_cols = [
         'rank_label', 'symbol', 'direction', 'score', 'adx', 'ker',
         'regime', 'confidence', 'is_valid', 'reason',
         'tp_percent', 'sl_percent', 'entry_price', 'tp_price', 'sl_price',
         'max_price_estimate', 'min_price_estimate',
-        'estimated_time_to_trade'
+        'mfe_expected', 'estimated_time_to_trade'
     ]
-    # Filtrar solo las que existen
     display_cols = [col for col in desired_cols if col in existing_cols]
 
     rename_map = {
@@ -166,11 +353,16 @@ if ranked:
         'sl_price': 'SL $',
         'max_price_estimate': 'Máx estimado $',
         'min_price_estimate': 'Mín estimado $',
+        'mfe_expected': 'Amplitud %',
         'estimated_time_to_trade': '⏱️ Próximo trade (min)'
     }
-    # Renombrar solo columnas existentes
     rename_map = {k: v for k, v in rename_map.items() if k in display_cols}
     df_display = df_rank[display_cols].rename(columns=rename_map)
+
+    # Formatear la columna de amplitud
+    if 'Amplitud %' in df_display.columns:
+        df_display['Amplitud %'] = df_display['Amplitud %'] * 100
+        df_display['Amplitud %'] = df_display['Amplitud %'].apply(lambda x: f"{x:.2f}%")
 
     def color_rows(row):
         if row.get('Aprobada', False):
@@ -188,8 +380,11 @@ else:
 
 st.markdown("---")
 
-# Horarios y días
+# ============================================================
+# TABLA DE HORARIOS (Argentina UTC-3)
+# ============================================================
 st.subheader("🕒 Análisis de Horarios y Trades (Argentina UTC-3)")
+
 horarios_data = {
     'Rango Horario': ['11:30–13:30', '13:30–15:00', '15:00–17:00',
                       '09:00–11:30', '17:00–20:00', '20:00–05:00'],
@@ -201,7 +396,11 @@ horarios_data = {
 df_horarios = pd.DataFrame(horarios_data)
 st.dataframe(df_horarios, use_container_width=True)
 
+# ============================================================
+# TABLA DE DÍAS
+# ============================================================
 st.subheader("📅 Días con mayor frecuencia de trades")
+
 dias_data = {
     'Día': ['Martes', 'Miércoles', 'Jueves', 'Viernes', 'Lunes'],
     'Trades/semana': [4.5, 4.2, 3.8, 3.5, 2.8],
@@ -212,8 +411,22 @@ st.dataframe(df_dias, use_container_width=True)
 
 st.markdown("---")
 
-# Detalle de señales aprobadas
+# ============================================================
+# TIEMPO HASTA LA PRÓXIMA SEÑAL GLOBAL
+# ============================================================
+global_time = calculate_global_time()
+if isinstance(global_time, int) or isinstance(global_time, float):
+    st.success(f"⏱️ **TIEMPO HASTA LA PRÓXIMA SEÑAL GLOBAL:** {global_time} minutos")
+else:
+    st.info("⏱️ **TIEMPO HASTA LA PRÓXIMA SEÑAL GLOBAL:** {global_time}")
+
+st.markdown("---")
+
+# ============================================================
+# SEÑALES APROBADAS (DETALLE)
+# ============================================================
 st.subheader("✅ Señales Aprobadas (Detalle)")
+
 if valid:
     for s in valid[:10]:
         with st.expander(f"{s['symbol']} — {s['direction']} (Score: {s['score']:.2f})"):
@@ -224,7 +437,8 @@ if valid:
                 st.metric("📉 KER", f"{s['ker']:.3f}")
                 st.metric("🎯 Régimen", s['regime'])
                 st.metric("📊 Volumen ratio", f"{s['volume_ratio']:.2f}x")
-                st.metric("📈 MFE esperado", f"{s['mfe_expected']*100:.2f}%")
+                amp = s.get('mfe_expected', 0) * 100
+                st.metric("📈 Amplitud esperada", f"{amp:.2f}%")
             with col2:
                 st.metric("💹 Confianza", f"{s['confidence']:.1f}%")
                 st.metric("📌 Entrada", f"${s['entry_price']:.2f}")
@@ -249,14 +463,19 @@ if valid:
                             close=df['close'][-50:]
                         )
                     ])
-                    fig.add_hline(y=s['entry_price'], line_dash="dash", line_color="white", annotation_text="Entry")
+                    fig.add_hline(y=s['entry_price'], line_dash="dash", line_color="black", annotation_text="Entry")
                     fig.add_hline(y=s['sl_price'], line_dash="dash", line_color="red", annotation_text="SL")
                     fig.add_hline(y=s['tp_price'], line_dash="dash", line_color="green", annotation_text="TP")
                     fig.update_layout(
                         height=250,
                         margin=dict(l=0, r=0, t=0, b=0),
-                        xaxis_rangeslider_visible=False
+                        xaxis_rangeslider_visible=False,
+                        paper_bgcolor='white',
+                        plot_bgcolor='white',
+                        font_color='black'
                     )
+                    fig.update_xaxes(gridcolor='#e0e0e0', color='black')
+                    fig.update_yaxes(gridcolor='#e0e0e0', color='black')
                     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No hay señales aprobadas en este momento.")
